@@ -7,9 +7,13 @@ module.exports = (app: Probot) => {
     context.log(config, '\n\nLoaded config')
     context.log('Repo: %s', context.payload.repository.full_name)
 
+
     const pr = context.payload.pull_request
     context.log('PR: %s', pr.html_url)
+
+
     const prLabels: string[] = pr.labels.map((label: any) => label.name)
+    context.log('PR lables: %s', prLabels)
 
     // determine if the PR has any "blacklisted" labels
     let blacklistedLabels: string[] = []
@@ -22,6 +26,11 @@ module.exports = (app: Probot) => {
         context.log('PR black listed from approving: %s', blacklistedLabels)
         return
       }
+    }
+
+    if (context.payload.action === "submitted") {
+      context.log('do nothing in submitted action')
+      return
     }
 
     // reading pull request owner info and check it with configuration
@@ -44,17 +53,19 @@ module.exports = (app: Probot) => {
     if (requiredLabelsSatisfied && ownerSatisfied) {
       const reviews = await getAutoapprovalReviews(context)
 
+      context.log(context.payload.action)
+
       if (reviews.length > 0) {
         context.log('PR has already reviews')
         if (context.payload.action === 'dismissed') {
           approvePullRequest(context)
-          applyLabels(context, config.apply_labels as string[])
+          applyLabels(context, config.apply_labels as string[], config.required_labels as string[])
           applyAutoMerge(context, prLabels, config.auto_merge_labels, config.auto_rebase_merge_labels, config.auto_squash_merge_labels)
           context.log('Review was dismissed, approve again')
         }
       } else {
         approvePullRequest(context)
-        applyLabels(context, config.apply_labels as string[])
+        applyLabels(context, config.apply_labels as string[], config.required_labels as string[])
         applyAutoMerge(context, prLabels, config.auto_merge_labels, config.auto_rebase_merge_labels, config.auto_squash_merge_labels)
         context.log('PR approved first time')
       }
@@ -70,9 +81,13 @@ async function approvePullRequest (context: Context) {
   await context.octokit.pulls.createReview(prParams)
 }
 
-async function applyLabels (context: Context, labels: string[]) {
+async function applyLabels (context: Context, labels: string[], required_labels: string[]) {
   // if there are labels required to be added, add them
   if (labels.length > 0) {
+    const requiredLabelsParam = context.issue({ labels:  required_labels})
+    await context.octokit.issues.removeAllLabels(requiredLabelsParam)
+
+
     // trying to apply existing labels to PR. If labels didn't exist, this call will fail
     const labelsParam = context.issue({ labels: labels })
     await context.octokit.issues.addLabels(labelsParam)
